@@ -166,8 +166,7 @@ namespace CRDiff
                 if (Path.GetExtension(filePath1) == ".rpt")
                 {
                     file1IsRpt = true;
-                    textFile1 = Path.ChangeExtension(filePath1, "json");
-                    textFile1Exists = File.Exists(textFile1);
+                    textFile1 = SafeJsonPath(filePath1);
                     textFile1 = SerializeToFile(filePath1, textFile1, reportOrder: 1);
                 }
                 else
@@ -178,8 +177,7 @@ namespace CRDiff
                 if (Path.GetExtension(filePath2) == ".rpt")
                 {
                     file2IsRpt = true;
-                    textFile2 = Path.ChangeExtension(filePath2, "json");
-                    textFile2Exists = File.Exists(textFile2);
+                    textFile2 = SafeJsonPath(filePath2);
                     textFile2 = SerializeToFile(filePath2, textFile2, reportOrder: 2);
                 }
                 else
@@ -187,22 +185,22 @@ namespace CRDiff
                     textFile2 = filePath2;
                 }
 
-                var diffParams = $"\"{textFile1}\" \"{textFile2}\"";
+                var toolArgs = GetTextDiffToolArgs();
+                var diffParams = string.IsNullOrEmpty(toolArgs)
+                    ? $"\"{textFile1}\" \"{textFile2}\""
+                    : $"{toolArgs} \"{textFile1}\" \"{textFile2}\"";
                 Console.Write($"Starting \"{diffTool}\" {diffParams}");
 
-                var diffProc = Process.Start(
-                    diffTool,
-                    diffParams
-                    );
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = diffTool,
+                    Arguments = diffParams,
+                    UseShellExecute = false
+                };
+                var diffProc = Process.Start(startInfo);
 
                 diffProc.WaitForExit();
 
-                // Clean up (delete) temp files after text diff tool is finished with them (if they didn't exist already)
-                if (file1IsRpt && !textFile1Exists)
-                    File.Delete(textFile1);
-
-                if (file2IsRpt && !textFile2Exists)
-                    File.Delete(textFile2);
                 return true;
             }
             catch (Exception ex)
@@ -350,9 +348,24 @@ namespace CRDiff
         {
             return GetAppSetting("TextDiffTool");
         }
+        private static string GetTextDiffToolArgs()
+        {
+            return GetAppSetting("TextDiffToolArgs") ?? "";
+        }
         private static bool SetTextDiffTool(string tool)
         {
             return SetAppSetting("TextDiffTool", tool);
+        }
+
+        /// <summary>
+        /// Returns a .json file path with spaces replaced by underscores
+        /// so diff tools that cannot handle spaces work correctly.
+        /// </summary>
+        private static string SafeJsonPath(string rptPath)
+        {
+            string dir = Path.GetDirectoryName(rptPath);
+            string baseName = Path.GetFileNameWithoutExtension(rptPath).Replace(' ', '_');
+            return Path.Combine(dir, baseName + ".json");
         }
     }
 }
