@@ -65,6 +65,8 @@ namespace CRSerializer
                 
                 jw.WriteObjectHierarchy("ReportDefinition", rpt.ReportDefinition);
 
+                jw.WriteConditionFormulas("ConditionFormulas", rptClient.ReportDefController.ReportDefinition);
+
                 jw.WritePropertyName("Subreports");
                 var subReports = rpt.Subreports;
                 if (subReports.Count > 0)
@@ -88,6 +90,8 @@ namespace CRSerializer
                         jw.WriteObjectHierarchy("CustomFunctions", rptClient.CustomFunctionController.GetCustomFunctions());
 
                         jw.WriteObjectHierarchy("ReportDefinition", subReport.ReportDefinition);
+
+                        jw.WriteConditionFormulas("ConditionFormulas", subReportClient.ReportDefController.ReportDefinition);
 
                         jw.WriteEndObject();
                     }

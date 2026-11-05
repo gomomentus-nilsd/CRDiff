@@ -36,32 +36,36 @@ namespace CRSerializer
 
         public static void WriteDataSource(this JsonWriter jw, string keyName, CrystalDecisions.ReportAppServer.DataDefModel.Tables tables)
         {
-            //Doesn't deal with a mix of command statements and tables (but that scenario is rare)
-            var isFirstTable = true;
+            // Collect in two passes to handle reports that mix command tables and regular tables
+            var commands = new System.Collections.Generic.List<string>();
+            var tableNames = new System.Collections.Generic.List<string>();
 
-            jw.WriteStartObject();
             foreach (dynamic table in tables)
             {
                 if (table.ClassName == "CrystalReports.CommandTable")
-                {
-                    jw.WritePropertyName("Command");
-                    MultiLinesToArray(jw, table.CommandText);
-                }
+                    commands.Add((string)table.CommandText);
                 else
-                {
-                    if (isFirstTable)
-                    {
-                        jw.WritePropertyName("Tables");
-                        jw.WriteStartArray();
-                        isFirstTable = false;
-                    }
-                    jw.WriteValue(table.Name);
-                }
+                    tableNames.Add((string)table.Name);
             }
-            if (!isFirstTable)
+
+            jw.WritePropertyName(keyName);
+            jw.WriteStartObject();
+
+            if (commands.Count > 0)
             {
+                jw.WritePropertyName("Command");
+                MultiLinesToArray(jw, commands[0]); // typically only one command per datasource
+            }
+
+            if (tableNames.Count > 0)
+            {
+                jw.WritePropertyName("Tables");
+                jw.WriteStartArray();
+                foreach (var name in tableNames)
+                    jw.WriteValue(name);
                 jw.WriteEndArray();
             }
+
             jw.WriteEndObject();
         }
 
@@ -126,6 +130,79 @@ namespace CRSerializer
             jw.WriteProperty("rightMargin", $"{printOptions.PageMargins.rightMargin} twips ({printOptions.PageMargins.rightMargin / 1440.0:N3} inches)");
             jw.WriteProperty("bottomMargin", $"{printOptions.PageMargins.bottomMargin} twips ({printOptions.PageMargins.bottomMargin / 1440.0:N3} inches)");
 
+            jw.WriteEndObject(); // closes PageMargins
+            jw.WriteEndObject(); // closes PrintOptions
+        }
+
+        /// <summary>
+        /// Writes the conditional formulas (Suppress, Can Grow, Keep Together, ... ) of every area, section and
+        /// report object. The Engine objects dumped by WriteObjectHierarchy do not expose them, so they are read
+        /// from the RAS report definition. See docs/adr/0001-serialize-condition-formulas-via-ras.md.
+        /// </summary>
+        public static void WriteConditionFormulas(this JsonWriter jw, string keyName, dynamic reportDefinition)
+        {
+            jw.WritePropertyName(keyName);
+            jw.WriteStartArray();
+            foreach (dynamic area in Items(reportDefinition.Areas))
+            {
+                string areaName = area.Name;
+                WriteSectionAreaConditionFormulas(jw, "Area", areaName, areaName, area.Format.ConditionFormulas);
+                foreach (dynamic section in Items(area.Sections))
+                {
+                    string sectionName = section.Name;
+                    string sectionPath = areaName + "/" + sectionName;
+                    WriteSectionAreaConditionFormulas(jw, "Section", sectionName, sectionPath, section.Format.ConditionFormulas);
+                    foreach (dynamic reportObject in Items(section.ReportObjects))
+                    {
+                        string objectName = reportObject.Name;
+                        WriteObjectConditionFormulas(jw, "Object", objectName, sectionPath + "/" + objectName, reportObject.Format.ConditionFormulas);
+                    }
+                }
+            }
+            jw.WriteEndArray();
+        }
+
+        // RAS collections are COM wrappers without IEnumerable support, so iterate by index.
+        private static IEnumerable<dynamic> Items(dynamic collection)
+        {
+            int count = collection.Count;
+            for (int i = 0; i < count; i++)
+                yield return collection[i];
+        }
+
+        // The RAS format objects come back as bare COM objects, so they are cast to the typed interfaces to reach
+        // the Formula[enum] getter. Enumerating the enum values keeps the condition names out of this code.
+        private static void WriteSectionAreaConditionFormulas(JsonWriter jw, string kind, string name, string path, object conditionFormulas)
+        {
+            var formulas = (CrystalDecisions.ReportAppServer.ReportDefModel.ISCRSectionAreaFormatConditionFormulas)conditionFormulas;
+            foreach (CrystalDecisions.ReportAppServer.ReportDefModel.CrSectionAreaFormatConditionFormulaTypeEnum condition
+                in System.Enum.GetValues(typeof(CrystalDecisions.ReportAppServer.ReportDefModel.CrSectionAreaFormatConditionFormulaTypeEnum)))
+            {
+                var formula = formulas[condition];
+                WriteConditionFormulaEntry(jw, kind, name, path, condition.ToString(), formula == null ? null : formula.Text);
+            }
+        }
+
+        private static void WriteObjectConditionFormulas(JsonWriter jw, string kind, string name, string path, object conditionFormulas)
+        {
+            var formulas = (CrystalDecisions.ReportAppServer.ReportDefModel.ISCRObjectFormatConditionFormulas)conditionFormulas;
+            foreach (CrystalDecisions.ReportAppServer.ReportDefModel.CrObjectFormatConditionFormulaTypeEnum condition
+                in System.Enum.GetValues(typeof(CrystalDecisions.ReportAppServer.ReportDefModel.CrObjectFormatConditionFormulaTypeEnum)))
+            {
+                var formula = formulas[condition];
+                WriteConditionFormulaEntry(jw, kind, name, path, condition.ToString(), formula == null ? null : formula.Text);
+            }
+        }
+
+        private static void WriteConditionFormulaEntry(JsonWriter jw, string kind, string name, string path, string condition, string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            jw.WriteStartObject();
+            jw.WriteProperty("Kind", kind);
+            jw.WriteProperty("Name", name);
+            jw.WriteProperty("Path", path);
+            jw.WriteProperty("Condition", condition);
+            jw.WriteProperty("Text", text);
             jw.WriteEndObject();
         }
     }
