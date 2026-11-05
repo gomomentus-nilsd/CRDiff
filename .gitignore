@@ -1,0 +1,11 @@
+# Visual Studio / build output
+.vs/
+bin/
+obj/
+*.user
+
+# NuGet packages restored by packages.config
+packages/
+
+# Local tool scratch files
+.claude-tmp-*.json
